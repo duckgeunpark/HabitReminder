@@ -9,7 +9,8 @@
     <application
         android:label="Habit Reminder"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:enableOnBackInvokedCallback="true">
         
         <activity
             android:name=".MainActivity"
@@ -44,6 +45,8 @@
             android:exported="true">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="WIDGET_CLICK_RESET" />
+                <action android:name="WIDGET_LONG_CLICK_SETTINGS" />
             </intent-filter>
             <meta-data
                 android:name="android.appwidget.provider"

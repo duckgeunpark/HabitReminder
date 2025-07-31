@@ -27,13 +27,20 @@ class HabitAdapter extends TypeAdapter<Habit> {
       lastResetTime: fields[7] as DateTime?,
       streakCount: fields[8] as int,
       totalClicks: fields[9] as int,
+      imageTimings: (fields[10] as Map?)?.cast<int, int>() ?? const {},
+      imageTimingsSeconds: (fields[11] as Map?)?.cast<int, int>() ?? const {},
+      clickedImageIndex: fields[12] as int? ?? 0,
+      activatedTime: fields[13] as DateTime?,
+      totalActiveSeconds: fields[14] as int? ?? 0,
+      clickTimes: (fields[15] as List?)?.cast<int>() ?? [],
+      clickTimestamps: (fields[16] as List?)?.cast<DateTime>() ?? [],
     );
   }
 
   @override
   void write(BinaryWriter writer, Habit obj) {
     writer
-      ..writeByte(10)
+      ..writeByte(17)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -53,7 +60,21 @@ class HabitAdapter extends TypeAdapter<Habit> {
       ..writeByte(8)
       ..write(obj.streakCount)
       ..writeByte(9)
-      ..write(obj.totalClicks);
+      ..write(obj.totalClicks)
+      ..writeByte(10)
+      ..write(obj.imageTimings)
+      ..writeByte(11)
+      ..write(obj.imageTimingsSeconds)
+      ..writeByte(12)
+      ..write(obj.clickedImageIndex)
+      ..writeByte(13)
+      ..write(obj.activatedTime)
+      ..writeByte(14)
+      ..write(obj.totalActiveSeconds)
+      ..writeByte(15)
+      ..write(obj.clickTimes)
+      ..writeByte(16)
+      ..write(obj.clickTimestamps);
   }
 
   @override

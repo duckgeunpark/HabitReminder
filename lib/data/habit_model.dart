@@ -37,6 +37,24 @@ class Habit extends HiveObject {
   @HiveField(10)
   Map<int, int> imageTimings; // 퍼센트 -> 이미지 인덱스
 
+  @HiveField(11)
+  Map<int, int> imageTimingsSeconds; // 시간(초) -> 이미지 인덱스
+
+  @HiveField(12)
+  int clickedImageIndex; // 마지막으로 클릭한 이미지 인덱스
+
+  @HiveField(13)
+  DateTime? activatedTime; // 활성화된 시간
+
+  @HiveField(14)
+  int totalActiveSeconds; // 총 활성화된 시간 (초)
+
+  @HiveField(15)
+  List<int> clickTimes; // 클릭한 시간들 (초 단위)
+
+  @HiveField(16)
+  List<DateTime> clickTimestamps; // 클릭한 시간들 (타임스탬프)
+
   Habit({
     required this.id,
     required this.name,
@@ -49,7 +67,14 @@ class Habit extends HiveObject {
     this.streakCount = 0,
     this.totalClicks = 0,
     this.imageTimings = const {},
-  });
+    this.imageTimingsSeconds = const {},
+    this.clickedImageIndex = 0,
+    this.activatedTime,
+    this.totalActiveSeconds = 0,
+    List<int>? clickTimes,
+    List<DateTime>? clickTimestamps,
+  }) : clickTimes = clickTimes ?? [],
+       clickTimestamps = clickTimestamps ?? [];
 
   /// 현재 이미지 경로 가져오기
   String? getCurrentImage() {
@@ -91,7 +116,13 @@ class Habit extends HiveObject {
       'lastResetTime': lastResetTime?.toIso8601String(),
       'streakCount': streakCount,
       'totalClicks': totalClicks,
-      'imageTimings': imageTimings,
+      'imageTimings': Map<String, int>.from(imageTimings.map((key, value) => MapEntry(key.toString(), value))),
+      'imageTimingsSeconds': Map<String, int>.from(imageTimingsSeconds.map((key, value) => MapEntry(key.toString(), value))),
+      'clickedImageIndex': clickedImageIndex,
+      'activatedTime': activatedTime?.toIso8601String(),
+      'totalActiveSeconds': totalActiveSeconds,
+      'clickTimes': clickTimes,
+      'clickTimestamps': clickTimestamps.map((dt) => dt.toIso8601String()).toList(),
     };
   }
 
@@ -111,8 +142,22 @@ class Habit extends HiveObject {
       streakCount: json['streakCount'] ?? 0,
       totalClicks: json['totalClicks'] ?? 0,
       imageTimings: json['imageTimings'] != null 
-          ? Map<int, int>.from(json['imageTimings'])
+          ? Map<int, int>.from(json['imageTimings'].map((key, value) => MapEntry(int.parse(key), value as int)))
           : const {},
+      imageTimingsSeconds: json['imageTimingsSeconds'] != null 
+          ? Map<int, int>.from(json['imageTimingsSeconds'].map((key, value) => MapEntry(int.parse(key), value as int)))
+          : const {},
+      clickedImageIndex: json['clickedImageIndex'] ?? 0,
+      activatedTime: json['activatedTime'] != null 
+          ? DateTime.parse(json['activatedTime']) 
+          : null,
+      totalActiveSeconds: json['totalActiveSeconds'] ?? 0,
+      clickTimes: json['clickTimes'] != null 
+          ? List<int>.from(json['clickTimes'])
+          : const [],
+      clickTimestamps: json['clickTimestamps'] != null 
+          ? List<DateTime>.from(json['clickTimestamps'].map((str) => DateTime.parse(str)))
+          : const [],
     );
   }
 } 

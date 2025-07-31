@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../widgets/home_widget_service.dart';
 import '../../constants/app_constants.dart';
+import '../../data/habit_model.dart';
+import '../../features/habit/habit_service.dart';
+import 'dart:convert'; // Added for jsonEncode
 
 class WidgetSettingsPage extends StatefulWidget {
   const WidgetSettingsPage({super.key});
@@ -11,21 +15,97 @@ class WidgetSettingsPage extends StatefulWidget {
 
 class _WidgetSettingsPageState extends State<WidgetSettingsPage> {
   final HomeWidgetService _widgetService = HomeWidgetService();
-  bool _hasActiveHabits = false;
+  final HabitService _habitService = HabitService();
+  List<Habit> _activeHabits = [];
+  String? _selectedHabitId;
   bool _isLoading = true;
 
   @override
   void initState() {
     super.initState();
-    _checkActiveHabits();
+    _loadActiveHabits();
   }
 
-  Future<void> _checkActiveHabits() async {
-    final hasActive = await _widgetService.hasActiveHabits();
+  Future<void> _loadActiveHabits() async {
     setState(() {
-      _hasActiveHabits = hasActive;
-      _isLoading = false;
+      _isLoading = true;
     });
+
+    try {
+      final activeHabits = _habitService.getActiveHabits();
+      setState(() {
+        _activeHabits = activeHabits;
+        _isLoading = false;
+      });
+
+      // 현재 선택된 습관 ID 가져오기
+      final prefs = await SharedPreferences.getInstance();
+      final currentWidgetHabitId = prefs.getString('selected_habit_id');
+      if (currentWidgetHabitId != null && activeHabits.any((h) => h.id == currentWidgetHabitId)) {
+        setState(() {
+          _selectedHabitId = currentWidgetHabitId;
+        });
+      } else if (activeHabits.isNotEmpty) {
+        // 기본값으로 첫 번째 활성 습관 선택
+        setState(() {
+          _selectedHabitId = activeHabits.first.id;
+        });
+        await _saveSelectedHabit(activeHabits.first.id);
+      }
+    } catch (e) {
+      debugPrint('활성 습관 로드 오류: $e');
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
+  Future<void> _saveSelectedHabit(String habitId) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('selected_habit_id', habitId);
+      
+      // 선택된 습관 정보 가져오기
+      final habit = _habitService.getHabitById(habitId);
+      if (habit != null) {
+        // 위젯 데이터 즉시 업데이트
+        final widgetData = {
+          'habit_id': habit.id,
+          'habit_name': habit.name,
+          'image_path': habit.getCurrentImage() ?? '',
+          'total_clicks': habit.totalClicks,
+          'streak_count': habit.streakCount,
+          'updated_at': DateTime.now().toIso8601String(),
+          'image_key': '${habit.id}_${habit.currentImageIndex}_${DateTime.now().millisecondsSinceEpoch}', // 캐시 방지용 키
+        };
+        
+        await prefs.setString('widget_habit_data', jsonEncode(widgetData));
+        debugPrint('위젯 설정 저장 완료: ${habit.name}');
+        
+        // 위젯 강제 업데이트
+        await _widgetService.forceUpdateWidget();
+      }
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('위젯이 "${habit?.name}" 습관으로 설정되었습니다!'),
+            backgroundColor: Theme.of(context).colorScheme.primary,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('위젯 설정 저장 오류: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('위젯 설정 저장 중 오류가 발생했습니다.'),
+            backgroundColor: Theme.of(context).colorScheme.error,
+          ),
+        );
+      }
+    }
   }
 
   Future<void> _updateWidget() async {
@@ -35,13 +115,13 @@ class _WidgetSettingsPageState extends State<WidgetSettingsPage> {
 
     try {
       await _widgetService.updateWidget();
-      await _checkActiveHabits();
+      await _loadActiveHabits();
       
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('위젯 기능이 임시로 비활성화되었습니다.'),
-            backgroundColor: Colors.orange,
+            content: Text('위젯이 업데이트되었습니다.'),
+            backgroundColor: Colors.green,
           ),
         );
       }
@@ -50,6 +130,39 @@ class _WidgetSettingsPageState extends State<WidgetSettingsPage> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('위젯 업데이트 중 오류가 발생했습니다: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
+  Future<void> _forceUpdateWidget() async {
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      await _widgetService.forceUpdateWidget();
+      await _loadActiveHabits();
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('위젯이 강제로 업데이트되었습니다.'),
+            backgroundColor: Colors.blue,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('위젯 강제 업데이트 중 오류가 발생했습니다: $e'),
             backgroundColor: Colors.red,
           ),
         );
@@ -82,43 +195,42 @@ class _WidgetSettingsPageState extends State<WidgetSettingsPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // 위젯 상태 카드
-                  Card(
-                    color: Theme.of(context).colorScheme.errorContainer,
-                    child: Padding(
-                      padding: const EdgeInsets.all(AppConstants.defaultPadding),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              Icon(
-                                Icons.warning,
-                                color: Theme.of(context).colorScheme.onErrorContainer,
-                              ),
-                              const SizedBox(width: AppConstants.smallPadding),
-                              Text(
-                                '위젯 기능 임시 비활성화',
-                                style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                                  color: Theme.of(context).colorScheme.onErrorContainer,
+                  // 활성 습관 선택
+                  if (_activeHabits.isNotEmpty) ...[
+                    Card(
+                      child: Padding(
+                        padding: const EdgeInsets.all(AppConstants.defaultPadding),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Icon(
+                                  Icons.widgets,
+                                  color: Theme.of(context).colorScheme.primary,
                                 ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: AppConstants.defaultPadding),
-                          Text(
-                            '위젯 기능이 현재 임시로 비활성화되었습니다.\n'
-                            'Flutter 버전 호환성 문제로 인해 위젯 기능을 나중에 구현할 예정입니다.',
-                            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                              color: Theme.of(context).colorScheme.onErrorContainer,
+                                const SizedBox(width: AppConstants.smallPadding),
+                                Text(
+                                  '위젯에 표시할 습관 선택',
+                                  style: Theme.of(context).textTheme.titleLarge,
+                                ),
+                              ],
                             ),
-                          ),
-                        ],
+                            const SizedBox(height: AppConstants.defaultPadding),
+                            Text(
+                              '위젯에 표시할 습관을 선택하세요. 위젯을 클릭하면 해당 습관이 리셋됩니다.',
+                              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
+                              ),
+                            ),
+                            const SizedBox(height: AppConstants.defaultPadding),
+                            ...(_activeHabits.map((habit) => _buildHabitSelectionTile(habit))),
+                          ],
+                        ),
                       ),
                     ),
-                  ),
-
-                  const SizedBox(height: AppConstants.largePadding),
+                    const SizedBox(height: AppConstants.largePadding),
+                  ],
 
                   // 활성 습관 상태
                   Card(
@@ -130,8 +242,8 @@ class _WidgetSettingsPageState extends State<WidgetSettingsPage> {
                           Row(
                             children: [
                               Icon(
-                                _hasActiveHabits ? Icons.check_circle : Icons.info_outline,
-                                color: _hasActiveHabits ? Colors.green : Colors.grey,
+                                _activeHabits.isNotEmpty ? Icons.check_circle : Icons.info_outline,
+                                color: _activeHabits.isNotEmpty ? Colors.green : Colors.grey,
                               ),
                               const SizedBox(width: AppConstants.smallPadding),
                               Text(
@@ -142,12 +254,12 @@ class _WidgetSettingsPageState extends State<WidgetSettingsPage> {
                           ),
                           const SizedBox(height: AppConstants.defaultPadding),
                           Text(
-                            _hasActiveHabits
-                                ? '활성 습관이 있어 위젯을 사용할 수 있습니다.'
+                            _activeHabits.isNotEmpty
+                                ? '활성 습관 ${_activeHabits.length}개가 있어 위젯을 사용할 수 있습니다.'
                                 : '활성 습관이 없어 위젯을 사용할 수 없습니다.',
                             style: Theme.of(context).textTheme.bodyMedium,
                           ),
-                          if (!_hasActiveHabits) ...[
+                          if (_activeHabits.isEmpty) ...[
                             const SizedBox(height: AppConstants.smallPadding),
                             Text(
                               '습관을 활성화하면 위젯을 사용할 수 있습니다.',
@@ -163,41 +275,7 @@ class _WidgetSettingsPageState extends State<WidgetSettingsPage> {
 
                   const SizedBox(height: AppConstants.largePadding),
 
-                  // 개발 예정 기능
-                  Card(
-                    child: Padding(
-                      padding: const EdgeInsets.all(AppConstants.defaultPadding),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            '개발 예정 기능',
-                            style: Theme.of(context).textTheme.titleLarge,
-                          ),
-                          const SizedBox(height: AppConstants.defaultPadding),
-                          _buildFeatureItem(
-                            '홈 화면 위젯',
-                            '설정한 시간 간격에 따라 이미지가 자동으로 변경되는 위젯',
-                            Icons.widgets,
-                          ),
-                          _buildFeatureItem(
-                            '위젯 클릭 리셋',
-                            '위젯을 클릭하면 타이머가 리셋되고 첫 번째 이미지로 돌아감',
-                            Icons.touch_app,
-                          ),
-                          _buildFeatureItem(
-                            '실시간 통계',
-                            '총 클릭 수와 연속 달성 일수가 위젯에 표시',
-                            Icons.analytics,
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-
-                  const SizedBox(height: AppConstants.largePadding),
-
-                  // 현재 사용 가능한 기능
+                  // 위젯 기능 설명
                   Card(
                     color: Theme.of(context).colorScheme.primaryContainer,
                     child: Padding(
@@ -208,12 +286,12 @@ class _WidgetSettingsPageState extends State<WidgetSettingsPage> {
                           Row(
                             children: [
                               Icon(
-                                Icons.check_circle,
+                                Icons.touch_app,
                                 color: Theme.of(context).colorScheme.onPrimaryContainer,
                               ),
                               const SizedBox(width: AppConstants.smallPadding),
                               Text(
-                                '현재 사용 가능한 기능',
+                                '위젯 기능',
                                 style: Theme.of(context).textTheme.titleLarge?.copyWith(
                                   color: Theme.of(context).colorScheme.onPrimaryContainer,
                                 ),
@@ -221,25 +299,48 @@ class _WidgetSettingsPageState extends State<WidgetSettingsPage> {
                             ],
                           ),
                           const SizedBox(height: AppConstants.defaultPadding),
-                          _buildAvailableFeatureItem(
-                            '습관 관리',
-                            '습관 생성, 수정, 삭제, 활성화/비활성화',
-                            Icons.psychology,
-                          ),
-                          _buildAvailableFeatureItem(
-                            '이미지 관리',
-                            '다중 이미지 선택 및 관리',
+                          _buildFeatureItem(
+                            '실시간 이미지 표시',
+                            '선택한 습관의 현재 이미지가 위젯에 실시간으로 표시됩니다.',
                             Icons.image,
                           ),
-                          _buildAvailableFeatureItem(
-                            '타이머 기능',
-                            '설정한 시간에 따라 이미지 자동 변경',
-                            Icons.timer,
+                          _buildFeatureItem(
+                            '위젯 클릭 리셋',
+                            '위젯을 클릭하면 선택된 습관이 리셋되고 첫 번째 이미지로 돌아갑니다.',
+                            Icons.refresh,
                           ),
-                          _buildAvailableFeatureItem(
-                            '통계 관리',
-                            '클릭 수, 연속 달성 일수 추적',
-                            Icons.analytics,
+                          _buildFeatureItem(
+                            '앱 실행 없이 리셋',
+                            '앱을 실행하지 않고도 위젯을 길게 눌러 설정을 변경할 수 있습니다.',
+                            Icons.settings,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+
+                  const SizedBox(height: AppConstants.largePadding),
+                  
+                  // 강제 업데이트 버튼 (디버그용)
+                  Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(AppConstants.defaultPadding),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '위젯 디버그',
+                            style: Theme.of(context).textTheme.titleLarge,
+                          ),
+                          const SizedBox(height: AppConstants.defaultPadding),
+                          ElevatedButton.icon(
+                            onPressed: _isLoading ? null : _forceUpdateWidget,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.orange,
+                              foregroundColor: Colors.white,
+                            ),
+                            icon: const Icon(Icons.refresh),
+                            label: const Text('위젯 강제 업데이트'),
                           ),
                         ],
                       ),
@@ -251,44 +352,60 @@ class _WidgetSettingsPageState extends State<WidgetSettingsPage> {
     );
   }
 
-  Widget _buildFeatureItem(String title, String description, IconData icon) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: AppConstants.defaultPadding),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(
-            icon,
-            size: 20,
-            color: Theme.of(context).colorScheme.primary,
+  Widget _buildHabitSelectionTile(Habit habit) {
+    final isSelected = _selectedHabitId == habit.id;
+    
+    return Card(
+      margin: const EdgeInsets.only(bottom: AppConstants.smallPadding),
+      color: isSelected 
+          ? Theme.of(context).colorScheme.primaryContainer 
+          : null,
+      child: ListTile(
+        leading: CircleAvatar(
+          backgroundColor: isSelected 
+              ? Theme.of(context).colorScheme.onPrimaryContainer 
+              : Theme.of(context).colorScheme.primary,
+          child: Icon(
+            Icons.psychology,
+            color: isSelected 
+                ? Theme.of(context).colorScheme.primaryContainer 
+                : Colors.white,
           ),
-          const SizedBox(width: AppConstants.defaultPadding),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  description,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
-                  ),
-                ),
-              ],
-            ),
+        ),
+        title: Text(
+          habit.name,
+          style: TextStyle(
+            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+            color: isSelected 
+                ? Theme.of(context).colorScheme.onPrimaryContainer 
+                : null,
           ),
-        ],
+        ),
+        subtitle: Text(
+          '클릭: ${habit.totalClicks}회 | 연속: ${habit.streakCount}일',
+          style: TextStyle(
+            color: isSelected 
+                ? Theme.of(context).colorScheme.onPrimaryContainer.withOpacity(0.8)
+                : Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
+          ),
+        ),
+        trailing: isSelected 
+            ? Icon(
+                Icons.check_circle,
+                color: Theme.of(context).colorScheme.onPrimaryContainer,
+              )
+            : null,
+        onTap: () async {
+          setState(() {
+            _selectedHabitId = habit.id;
+          });
+          await _saveSelectedHabit(habit.id);
+        },
       ),
     );
   }
 
-  Widget _buildAvailableFeatureItem(String title, String description, IconData icon) {
+  Widget _buildFeatureItem(String title, String description, IconData icon) {
     return Padding(
       padding: const EdgeInsets.only(bottom: AppConstants.defaultPadding),
       child: Row(

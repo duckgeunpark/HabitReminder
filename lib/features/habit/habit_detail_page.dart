@@ -4,6 +4,7 @@ import '../../data/habit_model.dart';
 import '../../features/habit/habit_service.dart';
 import '../../features/habit/edit_habit_page.dart';
 import '../../constants/app_constants.dart';
+import 'dart:async'; // Added for Timer
 
 class HabitDetailPage extends StatefulWidget {
   final Habit habit;
@@ -16,13 +17,30 @@ class HabitDetailPage extends StatefulWidget {
 
 class _HabitDetailPageState extends State<HabitDetailPage> {
   final HabitService _habitService = HabitService();
-  bool _isLoading = false;
   late Habit _currentHabit;
+  bool _isLoading = false;
+  Timer? _updateTimer;
 
   @override
   void initState() {
     super.initState();
     _currentHabit = widget.habit;
+    _startUpdateTimer();
+  }
+
+  @override
+  void dispose() {
+    _updateTimer?.cancel();
+    super.dispose();
+  }
+
+  void _startUpdateTimer() {
+    _updateTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (mounted) {
+        // 활성화된 시간이 실시간으로 업데이트되도록 setState 호출
+        setState(() {});
+      }
+    });
   }
 
   @override
@@ -84,8 +102,13 @@ class _HabitDetailPageState extends State<HabitDetailPage> {
                     const SizedBox(height: AppConstants.defaultPadding),
                     _buildInfoRow('총 클릭 수', '${_currentHabit.totalClicks}회'),
                     _buildInfoRow('연속 달성', '${_currentHabit.streakCount}일'),
-                    if (_currentHabit.lastResetTime != null)
-                      _buildInfoRow('마지막 리셋', _formatDate(_currentHabit.lastResetTime!)),
+                    _buildInfoRow('활성화된 시간', _formatActiveTime()),
+                    if (_currentHabit.clickTimes.isNotEmpty) ...[
+                      const SizedBox(height: AppConstants.smallPadding),
+                      _buildInfoRow('평균 클릭 시간', _formatAverageClickTime()),
+                      const SizedBox(height: AppConstants.smallPadding),
+                      _buildInfoRow('최고 기록', _formatBestClickTime()),
+                    ],
                   ],
                 ),
               ),
@@ -93,8 +116,8 @@ class _HabitDetailPageState extends State<HabitDetailPage> {
             
             const SizedBox(height: AppConstants.largePadding),
             
-            // 이미지 미리보기
-            if (_currentHabit.imagePaths.isNotEmpty) ...[
+            // 클릭 시간 기록 카드
+            if (_currentHabit.clickTimes.isNotEmpty) ...[
               Card(
                 child: Padding(
                   padding: const EdgeInsets.all(AppConstants.defaultPadding),
@@ -102,35 +125,57 @@ class _HabitDetailPageState extends State<HabitDetailPage> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        '이미지 미리보기',
+                        '클릭 시간 기록',
                         style: Theme.of(context).textTheme.titleLarge,
                       ),
                       const SizedBox(height: AppConstants.defaultPadding),
-                      GridView.builder(
-                        shrinkWrap: true,
-                        physics: const NeverScrollableScrollPhysics(),
-                        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: 3,
-                          crossAxisSpacing: AppConstants.smallPadding,
-                          mainAxisSpacing: AppConstants.smallPadding,
+                      SizedBox(
+                        height: 200,
+                        child: ListView.builder(
+                          itemCount: _currentHabit.clickTimes.length,
+                          itemBuilder: (context, index) {
+                            final clickTime = _currentHabit.clickTimes[index];
+                            final timestamp = _currentHabit.clickTimestamps[index];
+                            final reversedIndex = _currentHabit.clickTimes.length - 1 - index;
+                            
+                            return ListTile(
+                              leading: CircleAvatar(
+                                backgroundColor: Theme.of(context).colorScheme.primary,
+                                child: Text(
+                                  '${reversedIndex + 1}',
+                                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                                ),
+                              ),
+                              title: Text(
+                                '${_formatClickTime(clickTime)}',
+                                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              subtitle: Text(
+                                _formatDate(timestamp),
+                                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                  color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
+                                ),
+                              ),
+                              trailing: Container(
+                                width: 12,
+                                height: 12,
+                                decoration: BoxDecoration(
+                                  color: _getClickTimeColor(clickTime),
+                                  shape: BoxShape.circle,
+                                ),
+                              ),
+                            );
+                          },
                         ),
-                        itemCount: _currentHabit.imagePaths.length,
-                        itemBuilder: (context, index) {
-                          return ClipRRect(
-                            borderRadius: BorderRadius.circular(AppConstants.borderRadius),
-                            child: Image.file(
-                              File(_currentHabit.imagePaths[index]),
-                              width: double.infinity,
-                              height: double.infinity,
-                              fit: BoxFit.cover,
-                            ),
-                          );
-                        },
                       ),
                     ],
                   ),
                 ),
               ),
+              
+              const SizedBox(height: AppConstants.largePadding),
             ],
             
             const SizedBox(height: AppConstants.largePadding),
@@ -205,7 +250,66 @@ class _HabitDetailPageState extends State<HabitDetailPage> {
   }
 
   String _formatDate(DateTime date) {
-    return '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+    return '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')} ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
+  }
+
+  String _formatActiveTime() {
+    int totalSeconds = _currentHabit.totalActiveSeconds;
+    
+    // 현재 활성화 중인 경우 현재까지의 시간도 추가
+    if (_currentHabit.isActive && _currentHabit.activatedTime != null) {
+      final now = DateTime.now();
+      final currentActiveDuration = now.difference(_currentHabit.activatedTime!);
+      totalSeconds += currentActiveDuration.inSeconds;
+    }
+    
+    if (totalSeconds < 60) {
+      return '${totalSeconds}초';
+    } else if (totalSeconds < 3600) {
+      final minutes = totalSeconds ~/ 60;
+      final seconds = totalSeconds % 60;
+      return '${minutes}분 ${seconds}초';
+    } else {
+      final hours = totalSeconds ~/ 3600;
+      final minutes = (totalSeconds % 3600) ~/ 60;
+      return '${hours}시간 ${minutes}분';
+    }
+  }
+
+  String _formatAverageClickTime() {
+    if (_currentHabit.clickTimes.isEmpty) {
+      return '0초';
+    }
+    final totalSeconds = _currentHabit.clickTimes.reduce((a, b) => a + b);
+    final averageSeconds = totalSeconds / _currentHabit.clickTimes.length;
+    return '${averageSeconds.toInt()}초';
+  }
+
+  String _formatBestClickTime() {
+    if (_currentHabit.clickTimes.isEmpty) {
+      return '0초';
+    }
+    return '${_currentHabit.clickTimes.reduce((a, b) => a > b ? a : b)}초';
+  }
+
+  Color _getClickTimeColor(int clickTime) {
+    if (clickTime < 10) {
+      return Colors.green;
+    } else if (clickTime < 20) {
+      return Colors.orange;
+    } else {
+      return Colors.red;
+    }
+  }
+
+  String _formatClickTime(int seconds) {
+    if (seconds < 60) {
+      return '${seconds}초';
+    } else {
+      final minutes = seconds ~/ 60;
+      final remainingSeconds = seconds % 60;
+      return '${minutes}분 ${remainingSeconds}초';
+    }
   }
 
   Future<void> _editHabit() async {
@@ -361,36 +465,33 @@ class _HabitDetailPageState extends State<HabitDetailPage> {
     });
 
     try {
-      // 통계만 초기화
       _currentHabit.totalClicks = 0;
       _currentHabit.streakCount = 0;
       _currentHabit.lastResetTime = null;
+      _currentHabit.totalActiveSeconds = 0;
+      _currentHabit.activatedTime = null;
+      _currentHabit.clickTimes = [];
+      _currentHabit.clickTimestamps = [];
       
       await _habitService.updateHabit(_currentHabit);
-      
-      // 업데이트된 습관 정보를 가져옴
-      final updatedHabit = _habitService.getHabitById(_currentHabit.id);
-      if (updatedHabit != null) {
-        setState(() {
-          _currentHabit = updatedHabit;
-        });
-      }
       
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('통계가 초기화되었습니다.'),
-            backgroundColor: Colors.orange,
+            backgroundColor: Colors.green,
           ),
         );
       }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Text('통계 초기화 중 오류가 발생했습니다.'),
-          backgroundColor: Theme.of(context).colorScheme.error,
-        ),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('통계 초기화 중 오류가 발생했습니다: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     } finally {
       setState(() {
         _isLoading = false;

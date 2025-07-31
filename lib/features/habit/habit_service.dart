@@ -3,6 +3,8 @@ import 'package:hive/hive.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../data/habit_model.dart';
 import '../../constants/app_constants.dart';
+import '../../services/timer_service.dart';
+import 'package:flutter/foundation.dart'; // Added for debugPrint
 
 class HabitService {
   static final HabitService _instance = HabitService._internal();
@@ -58,6 +60,22 @@ class HabitService {
   Future<void> toggleHabitActive(String id) async {
     final habit = getHabitById(id);
     if (habit != null) {
+      final now = DateTime.now();
+      
+      if (habit.isActive) {
+        // 활성화 → 비활성화: 활성화된 시간을 총 시간에 추가
+        if (habit.activatedTime != null) {
+          final activeDuration = now.difference(habit.activatedTime!);
+          habit.totalActiveSeconds += activeDuration.inSeconds;
+          habit.activatedTime = null;
+          debugPrint('습관 "${habit.name}" 비활성화: 총 활성화 시간 ${habit.totalActiveSeconds}초');
+        }
+      } else {
+        // 비활성화 → 활성화: 활성화 시작 시간 기록
+        habit.activatedTime = now;
+        debugPrint('습관 "${habit.name}" 활성화 시작');
+      }
+      
       habit.isActive = !habit.isActive;
       await updateHabit(habit);
     }
@@ -66,11 +84,22 @@ class HabitService {
   Future<void> resetHabit(String id) async {
     final habit = getHabitById(id);
     if (habit != null) {
+      // 현재 이미지 인덱스를 클릭한 이미지로 저장
+      habit.clickedImageIndex = habit.currentImageIndex;
       habit.currentImageIndex = 0;
       habit.totalClicks++;
       
-      // 연속일 계산 로직 수정
+      // 클릭 시간 기록
       final now = DateTime.now();
+      final lastUpdate = habit.lastResetTime ?? habit.createdAt;
+      final clickTime = now.difference(lastUpdate).inSeconds;
+      
+      habit.clickTimes.add(clickTime);
+      habit.clickTimestamps.add(now);
+      
+      debugPrint('습관 "${habit.name}" 클릭 시간 기록: ${clickTime}초');
+      
+      // 연속일 계산 로직 수정
       if (habit.lastResetTime != null) {
         final timeDifference = now.difference(habit.lastResetTime!);
         // 24시간이 지났는지 확인
@@ -84,6 +113,17 @@ class HabitService {
       
       habit.lastResetTime = now;
       await updateHabit(habit);
+      TimerService().resetHabitTimer(habit.id);
+      
+      // 위젯 업데이트 알림 (SharedPreferences를 통해)
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('widget_reset_habit_id', habit.id);
+        await prefs.setString('widget_update_timestamp', DateTime.now().toIso8601String());
+        debugPrint('습관 리셋 후 위젯 업데이트 알림 전송: ${habit.name}');
+      } catch (e) {
+        debugPrint('습관 리셋 후 위젯 업데이트 알림 오류: $e');
+      }
     }
   }
 
