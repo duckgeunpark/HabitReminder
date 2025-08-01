@@ -210,7 +210,7 @@ class HabitReminderWidget : AppWidgetProvider() {
                     // 활성 습관이 없는 경우
                     views.setTextViewText(R.id.widget_habit_name, habitName)
                     views.setTextViewText(R.id.widget_stats, "앱에서 습관을 활성화하세요")
-                    views.setImageViewResource(R.id.widget_image, R.drawable.ic_launcher_foreground)
+                    views.setImageViewResource(R.id.widget_image, android.R.drawable.ic_dialog_alert)
                     
                     // 클릭 시 앱 열기
                     val openAppIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)
