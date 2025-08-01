@@ -40,17 +40,30 @@ class _WidgetSettingsPageState extends State<WidgetSettingsPage> {
 
       // 현재 선택된 습관 ID 가져오기
       final prefs = await SharedPreferences.getInstance();
-      final currentWidgetHabitId = prefs.getString('selected_habit_id');
+      final currentWidgetHabitId = prefs.getString('flutter.selected_habit_id');
       if (currentWidgetHabitId != null && activeHabits.any((h) => h.id == currentWidgetHabitId)) {
         setState(() {
           _selectedHabitId = currentWidgetHabitId;
         });
-      } else if (activeHabits.isNotEmpty) {
-        // 기본값으로 첫 번째 활성 습관 선택
+      } else if (activeHabits.isNotEmpty && activeHabits.length == 1) {
+        // 활성 습관이 하나뿐인 경우에만 자동 선택
         setState(() {
           _selectedHabitId = activeHabits.first.id;
         });
         await _saveSelectedHabit(activeHabits.first.id);
+      }
+      
+      // 위젯 설정 요청 플래그 확인 및 제거
+      final widgetSetupRequested = prefs.getBool('widget_setup_requested');
+      if (widgetSetupRequested == true) {
+        await prefs.remove('widget_setup_requested');
+        if (mounted) {
+          if (activeHabits.isNotEmpty) {
+            _showHabitSelectionGuide();
+          } else {
+            _showNoActiveHabitsMessage();
+          }
+        }
       }
     } catch (e) {
       debugPrint('활성 습관 로드 오류: $e');
@@ -59,11 +72,49 @@ class _WidgetSettingsPageState extends State<WidgetSettingsPage> {
       });
     }
   }
+  
+  void _showHabitSelectionGuide() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('위젯에 표시할 습관을 선택해주세요!'),
+            backgroundColor: Theme.of(context).colorScheme.primary,
+            duration: const Duration(seconds: 3),
+            action: SnackBarAction(
+              label: '확인',
+              textColor: Colors.white,
+              onPressed: () {},
+            ),
+          ),
+        );
+      }
+    });
+  }
+
+  void _showNoActiveHabitsMessage() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('활성화된 습관이 없습니다. 먼저 습관을 활성화해주세요.'),
+            backgroundColor: Theme.of(context).colorScheme.error,
+            duration: const Duration(seconds: 4),
+            action: SnackBarAction(
+              label: '닫기',
+              textColor: Colors.white,
+              onPressed: () {},
+            ),
+          ),
+        );
+      }
+    });
+  }
 
   Future<void> _saveSelectedHabit(String habitId) async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('selected_habit_id', habitId);
+      await prefs.setString('flutter.selected_habit_id', habitId);
       
       // 선택된 습관 정보 가져오기
       final habit = _habitService.getHabitById(habitId);
@@ -79,7 +130,7 @@ class _WidgetSettingsPageState extends State<WidgetSettingsPage> {
           'image_key': '${habit.id}_${habit.currentImageIndex}_${DateTime.now().millisecondsSinceEpoch}', // 캐시 방지용 키
         };
         
-        await prefs.setString('widget_habit_data', jsonEncode(widgetData));
+        await prefs.setString('flutter.widget_habit_data', jsonEncode(widgetData));
         debugPrint('위젯 설정 저장 완료: ${habit.name}');
         
         // 위젯 강제 업데이트
@@ -224,6 +275,33 @@ class _WidgetSettingsPageState extends State<WidgetSettingsPage> {
                               ),
                             ),
                             const SizedBox(height: AppConstants.defaultPadding),
+                            if (_selectedHabitId == null && _activeHabits.length > 1)
+                              Container(
+                                padding: const EdgeInsets.all(AppConstants.smallPadding),
+                                margin: const EdgeInsets.only(bottom: AppConstants.defaultPadding),
+                                decoration: BoxDecoration(
+                                  color: Theme.of(context).colorScheme.secondaryContainer,
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      Icons.info_outline,
+                                      color: Theme.of(context).colorScheme.onSecondaryContainer,
+                                      size: 20,
+                                    ),
+                                    const SizedBox(width: AppConstants.smallPadding),
+                                    Expanded(
+                                      child: Text(
+                                        '위젯에 표시할 습관을 선택해주세요',
+                                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                          color: Theme.of(context).colorScheme.onSecondaryContainer,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
                             ...(_activeHabits.map((habit) => _buildHabitSelectionTile(habit))),
                           ],
                         ),

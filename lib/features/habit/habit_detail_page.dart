@@ -104,9 +104,9 @@ class _HabitDetailPageState extends State<HabitDetailPage> {
                     _buildInfoRow('연속 달성', '${_currentHabit.streakCount}일'),
                     _buildInfoRow('활성화된 시간', _formatActiveTime()),
                     if (_currentHabit.clickTimes.isNotEmpty) ...[
-                      const SizedBox(height: AppConstants.smallPadding),
+                      const SizedBox(height: AppConstants.defaultPadding),
                       _buildInfoRow('평균 클릭 시간', _formatAverageClickTime()),
-                      const SizedBox(height: AppConstants.smallPadding),
+                      const SizedBox(height: AppConstants.defaultPadding),
                       _buildInfoRow('최고 기록', _formatBestClickTime()),
                     ],
                   ],

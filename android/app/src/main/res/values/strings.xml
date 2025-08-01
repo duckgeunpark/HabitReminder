@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Habit Reminder</string>
+    <string name="widget_name">습관 리마인더 위젯</string>
+    <string name="widget_description">습관 형성을 도와주는 위젯입니다</string>
+    <string name="no_active_habits">활성 습관이 없습니다</string>
+    <string name="click_to_reset">클릭하여 리셋</string>
+    <string name="processing">처리 중...</string>
+    <string name="habit_reset_in_progress">습관 리셋 중</string>
+</resources>

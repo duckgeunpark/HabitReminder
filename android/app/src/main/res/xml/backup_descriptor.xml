@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <!-- 백업에 포함할 데이터 -->
+    <include domain="sharedpref" path="FlutterSharedPreferences.xml"/>
+    
+    <!-- 백업에서 제외할 데이터 -->
+    <exclude domain="sharedpref" path="device_info.xml"/>
+    <exclude domain="database" path="cache.db"/>
+    <exclude domain="file" path="temp/"/>
+    
+    <!-- 이미지 파일들은 용량이 클 수 있으므로 선택적으로 백업 -->
+    <exclude domain="file" path="images/"/>
+</full-backup-content>

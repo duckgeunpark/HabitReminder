@@ -1,19 +1,21 @@
 import 'dart:io';
 import 'dart:async';
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
 import 'app.dart';
+import 'constants/app_constants.dart';
 import 'data/habit_model.dart';
 import 'features/habit/habit_service.dart';
 import 'features/habit/add_habit_page.dart';
 import 'features/habit/habit_detail_page.dart';
 import 'features/habit/edit_habit_page.dart';
 import 'features/widget/widget_settings_page.dart';
-import 'widgets/home_widget_service.dart';
 import 'services/timer_service.dart';
-import 'constants/app_constants.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'dart:convert';
+import 'widgets/home_widget_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -50,26 +52,37 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
-  final HabitService _habitService = HabitService();
-  final HomeWidgetService _widgetService = HomeWidgetService();
-  final TimerService _timerService = TimerService();
+  late final HabitService _habitService;
+  late final HomeWidgetService _widgetService;
+  late final TimerService _timerService;
   List<Habit> _habits = [];
 
   @override
   void initState() {
     super.initState();
+    _initializeServices();
+    _setupLifecycleObserver();
+    _loadInitialData();
+  }
+
+  void _initializeServices() {
+    _habitService = HabitService();
+    _widgetService = HomeWidgetService();
+    _timerService = TimerService();
+  }
+
+  void _setupLifecycleObserver() {
+    WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _checkWidgetIntent();
+    });
+  }
+
+  void _loadInitialData() {
     _loadHabits();
     _checkWidgetStatus();
     _startActiveTimeTimer();
     _checkWidgetResetEvent();
-    
-    // 앱이 포그라운드에 올 때마다 위젯 이벤트 확인
-    WidgetsBinding.instance.addObserver(this);
-    
-    // 위젯으로부터 앱이 열렸는지 확인
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _checkWidgetIntent();
-    });
   }
 
   @override
@@ -84,162 +97,160 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     super.didChangeAppLifecycleState(state);
     
     if (state == AppLifecycleState.resumed) {
-      // 앱이 포그라운드에 올 때 위젯 이벤트 확인
+      // 앱이 포그라운드에 올 때 위젯 이벤트 확인 및 업데이트
       _checkWidgetResetEvent();
+      _widgetService.updateWidget(); // 앱 활성화 시 위젯 업데이트
+      debugPrint('앱 활성화로 인한 위젯 업데이트');
+    } else if (state == AppLifecycleState.paused) {
+      // 앱이 백그라운드로 갈 때 최종 위젯 상태 업데이트
+      _widgetService.updateWidget();
+      debugPrint('앱 백그라운드 전환으로 인한 위젯 업데이트');
     }
   }
 
   Future<void> _checkWidgetResetEvent() async {
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final resetEventString = prefs.getString('widget_reset_event');
+      const eventFilePath = '/data/data/com.example.habit_reminder/files/widget_reset_event.json';
+      final eventFile = File(eventFilePath);
       
-      if (resetEventString != null) {
-        final resetEvent = jsonDecode(resetEventString);
-        final habitId = resetEvent['habit_id'] as String;
-        
-        // 습관 리셋 처리
-        await _habitService.resetHabit(habitId);
-        
-        // 습관의 이미지를 1번으로 초기화
-        final habit = _habitService.getHabitById(habitId);
-        if (habit != null) {
-          habit.currentImageIndex = 0;
-          await _habitService.updateHabit(habit);
-          
-          // 위젯 데이터를 올바른 이미지 경로로 업데이트
-          final widgetData = {
-            'habit_id': habit.id,
-            'habit_name': habit.name,
-            'image_path': habit.getCurrentImage() ?? '',
-            'total_clicks': habit.totalClicks,
-            'streak_count': habit.streakCount,
-            'updated_at': DateTime.now().toIso8601String(),
-          };
-          
-          await prefs.setString('widget_habit_data', jsonEncode(widgetData));
-          debugPrint('위젯 클릭 후 이미지 경로 업데이트: ${habit.getCurrentImage()}');
-        }
-        
-        await _loadHabits();
-        await _widgetService.updateWidget();
-        
-        // 리셋 이벤트 삭제
-        await prefs.remove('widget_reset_event');
-        
-        if (mounted) {
-          if (habit != null) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text('${habit.name} 습관이 위젯에서 리셋되었습니다!'),
-                backgroundColor: Theme.of(context).colorScheme.primary,
-                duration: const Duration(seconds: 2),
-              ),
-            );
-          }
-        }
+      if (!await eventFile.exists()) return;
+      
+      final resetEventString = await eventFile.readAsString();
+      debugPrint('위젯 이벤트 파일 감지: $resetEventString');
+      
+      final resetEvent = jsonDecode(resetEventString);
+      final habitId = resetEvent['habit_id'] as String;
+      debugPrint('위젯 클릭된 습관 ID: $habitId');
+      
+      final habit = _habitService.getHabitById(habitId);
+      if (habit != null) {
+        debugPrint('습관 정보 찾음: ${habit.name}');
+        await _onHabitImageTap(habit, isFromWidget: true);
+        debugPrint('위젯 클릭 처리 완료: ${habit.name}');
+      } else {
+        debugPrint('습관 정보를 찾을 수 없음: $habitId');
       }
+      
+      await eventFile.delete();
+      debugPrint('위젯 이벤트 파일 삭제 완료');
     } catch (e) {
       debugPrint('위젯 리셋 이벤트 확인 오류: $e');
     }
   }
 
   void _startActiveTimeTimer() {
+    // Android 위젯은 30분 미만 자동 업데이트가 불가능하므로
+    // 앱이 활성화된 상태에서만 업데이트
     Timer.periodic(const Duration(seconds: 1), (timer) {
-      if (mounted) {
-        // 위젯 이벤트 확인 (매초마다)
-        _checkWidgetResetEvent();
-        _checkWidgetUpdateNotification();
-        
-        // 활성 습관들의 이미지 변경 확인 및 활성화 시간 업데이트
-        final activeHabits = _habitService.getActiveHabits();
-        bool hasChanges = false;
-        
-        for (final habit in activeHabits) {
-          // 활성화된 시간 실시간 업데이트
-          if (habit.isActive && habit.activatedTime != null) {
-            final now = DateTime.now();
-            final activeDuration = now.difference(habit.activatedTime!);
-            final newTotalActiveSeconds = habit.totalActiveSeconds + activeDuration.inSeconds;
-            
-            if (habit.totalActiveSeconds != newTotalActiveSeconds) {
-              habit.totalActiveSeconds = newTotalActiveSeconds;
-              habit.activatedTime = now; // 새로운 기준점 설정
-              _habitService.updateHabit(habit);
-              hasChanges = true;
-              debugPrint('습관 "${habit.name}" 활성화 시간 업데이트: ${habit.totalActiveSeconds}초');
-            }
-          }
-          
-          if (habit.imagePaths.isNotEmpty) {
-            final now = DateTime.now();
-            final lastUpdate = habit.lastResetTime ?? habit.createdAt;
-            final elapsedSeconds = now.difference(lastUpdate).inSeconds;
-            
-            // 타이밍 설정이 있는지 확인
-            if (habit.imageTimingsSeconds.isNotEmpty) {
-              // 사용자가 설정한 타이밍에 따라 이미지 변경
-              final totalSeconds = habit.intervalSeconds;
-              
-              // 현재 시간에 해당하는 이미지 찾기
-              int? nextImageIndex;
-              int? nextTiming = null;
-              
-              for (final entry in habit.imageTimingsSeconds.entries) {
-                if (entry.key >= elapsedSeconds) {
-                  if (nextTiming == null || entry.key < nextTiming!) {
-                    nextTiming = entry.key;
-                    nextImageIndex = entry.value;
-                  }
-                }
-              }
-              
-              // 다음 이미지가 있고, 현재 이미지와 다르면 변경
-              if (nextImageIndex != null && nextImageIndex != habit.currentImageIndex) {
-                habit.currentImageIndex = nextImageIndex;
-                _habitService.updateHabit(habit);
-                hasChanges = true;
-                debugPrint('습관 "${habit.name}" 이미지 변경: ${habit.getCurrentImage()} (${elapsedSeconds}초)');
-                
-                // 위젯 업데이트 (캐시 방지)
-                _widgetService.updateWidgetOnImageChange(habit.id);
-              }
-            } else {
-              // 타이밍 설정이 없으면 전체 시간을 균등 분할
-              final totalSeconds = habit.intervalSeconds;
-              final imageCount = habit.imagePaths.length;
-              final secondsPerImage = totalSeconds / imageCount;
-              
-              // 현재 시간에 해당하는 이미지 인덱스 계산 (시간이 초과되어도 계속 증가)
-              final currentImageIndex = (elapsedSeconds / secondsPerImage).floor();
-              final actualImageIndex = currentImageIndex % imageCount;
-              
-              // 이미지 인덱스가 변경되었으면 업데이트
-              if (habit.currentImageIndex != actualImageIndex) {
-                habit.currentImageIndex = actualImageIndex;
-                _habitService.updateHabit(habit);
-                hasChanges = true;
-                debugPrint('습관 "${habit.name}" 이미지 변경: ${habit.getCurrentImage()} (${elapsedSeconds}초)');
-                
-                // 위젯 업데이트 (캐시 방지)
-                _widgetService.updateWidgetOnImageChange(habit.id);
-              }
-            }
-          }
-        }
-        
-        if (hasChanges) {
-          // 변경사항이 있으면 목록 새로고침
-          final updatedHabits = _habitService.getAllHabits();
-          setState(() {
-            _habits = updatedHabits;
-          });
-          
-          // 위젯도 함께 업데이트
-          _widgetService.updateWidget();
+      if (!mounted) return;
+      
+      _checkAllWidgetEvents();
+      _updateActiveHabits();
+    });
+  }
+
+  void _checkAllWidgetEvents() {
+    _checkWidgetResetEvent();
+    _checkWidgetUpdateNotification();
+    _checkAndRefreshHabits();
+  }
+
+  void _updateActiveHabits() {
+    final activeHabits = _habitService.getActiveHabits();
+    bool hasChanges = false;
+    
+    for (final habit in activeHabits) {
+      if (_updateHabitActiveTime(habit)) hasChanges = true;
+      if (_updateHabitImage(habit)) {
+        hasChanges = true;
+        // 이미지가 변경되면 즉시 위젯에 알림
+        _widgetService.updateWidgetOnImageChange(habit.id);
+      }
+    }
+    
+    if (hasChanges) {
+      _refreshHabitsAndWidget();
+    }
+  }
+
+  bool _updateHabitActiveTime(Habit habit) {
+    if (!habit.isActive || habit.activatedTime == null) return false;
+    
+    final now = DateTime.now();
+    final activeDuration = now.difference(habit.activatedTime!);
+    final newTotalActiveSeconds = habit.totalActiveSeconds + activeDuration.inSeconds;
+    
+    if (habit.totalActiveSeconds != newTotalActiveSeconds) {
+      habit.totalActiveSeconds = newTotalActiveSeconds;
+      habit.activatedTime = now;
+      _habitService.updateHabit(habit);
+      debugPrint('습관 "${habit.name}" 활성화 시간 업데이트: ${habit.totalActiveSeconds}초');
+      return true;
+    }
+    return false;
+  }
+
+  bool _updateHabitImage(Habit habit) {
+    if (habit.imagePaths.isEmpty) return false;
+    
+    final now = DateTime.now();
+    final lastUpdate = habit.lastResetTime ?? habit.createdAt;
+    final elapsedSeconds = now.difference(lastUpdate).inSeconds;
+    
+    final newImageIndex = _calculateImageIndex(habit, elapsedSeconds);
+    
+    if (newImageIndex != habit.currentImageIndex) {
+      final oldImageIndex = habit.currentImageIndex;
+      habit.currentImageIndex = newImageIndex;
+      _habitService.updateHabit(habit);
+      debugPrint('🖼️ 이미지 변경 감지: "${habit.name}" ${oldImageIndex} → ${newImageIndex} (${elapsedSeconds}초)');
+      debugPrint('📁 새 이미지 경로: ${habit.getCurrentImage()}');
+      
+      _widgetService.updateWidgetOnImageChange(habit.id).then((_) {
+        debugPrint('✅ 위젯 업데이트 신호 전송 완료: ${habit.name}');
+      });
+      return true;
+    }
+    return false;
+  }
+
+  int _calculateImageIndex(Habit habit, int elapsedSeconds) {
+    if (habit.imageTimingsSeconds.isNotEmpty) {
+      return _calculateImageIndexFromTimings(habit, elapsedSeconds);
+    } else {
+      return _calculateImageIndexUniform(habit, elapsedSeconds);
+    }
+  }
+
+  int _calculateImageIndexFromTimings(Habit habit, int elapsedSeconds) {
+    int? nextImageIndex;
+    int? nextTiming;
+    
+    for (final entry in habit.imageTimingsSeconds.entries) {
+      if (entry.key >= elapsedSeconds) {
+        if (nextTiming == null || entry.key < nextTiming) {
+          nextTiming = entry.key;
+          nextImageIndex = entry.value;
         }
       }
+    }
+    
+    return nextImageIndex ?? habit.currentImageIndex;
+  }
+
+  int _calculateImageIndexUniform(Habit habit, int elapsedSeconds) {
+    final imageCount = habit.imagePaths.length;
+    final secondsPerImage = habit.intervalSeconds / imageCount;
+    final currentImageIndex = (elapsedSeconds / secondsPerImage).floor();
+    return currentImageIndex % imageCount;
+  }
+
+  void _refreshHabitsAndWidget() {
+    final updatedHabits = _habitService.getAllHabits();
+    setState(() {
+      _habits = updatedHabits;
     });
+    _widgetService.updateWidget();
   }
 
   Future<void> _checkWidgetUpdateNotification() async {
@@ -274,21 +285,31 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     await _widgetService.checkWidgetStatus();
   }
 
-  Future<void> _onHabitImageTap(Habit habit) async {
+  Future<void> _onHabitImageTap(Habit habit, {bool isFromWidget = false}) async {
+    debugPrint('_onHabitImageTap 호출됨: ${habit.name}, isFromWidget: $isFromWidget');
+    
     if (habit.isActive) {
+      debugPrint('습관 활성화 상태 확인됨: ${habit.name}');
       try {
         await _habitService.resetHabit(habit.id);
+        debugPrint('습관 리셋 완료: ${habit.name}');
         await _loadHabits();
+        debugPrint('습관 목록 새로고침 완료');
         await _widgetService.onHabitChanged(habit.id);
+        debugPrint('위젯 업데이트 완료: ${habit.name}');
         
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('${habit.name} 습관이 초기화되었습니다!'),
+            content: Text(isFromWidget 
+              ? '${habit.name} 습관이 위젯에서 초기화되었습니다!' 
+              : '${habit.name} 습관이 초기화되었습니다!'),
             backgroundColor: Theme.of(context).colorScheme.primary,
             duration: const Duration(seconds: 2),
           ),
         );
+        debugPrint('SnackBar 표시 완료');
       } catch (e) {
+        debugPrint('습관 초기화 중 오류: $e');
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: const Text('습관 초기화 중 오류가 발생했습니다.'),
@@ -297,6 +318,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         );
       }
     } else {
+      debugPrint('습관 비활성화 상태: ${habit.name}');
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('${habit.name} 습관을 활성화한 후 클릭해주세요.'),
@@ -308,13 +330,24 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   Future<void> _toggleHabitActive(Habit habit) async {
     try {
+      final wasActive = habit.isActive;
       await _habitService.toggleHabitActive(habit.id);
       await _loadHabits();
-      await _widgetService.onHabitChanged(habit.id);
+      
+      // 습관 상태 변경 후 위젯 상태 확인 및 업데이트
+      if (wasActive && !habit.isActive) {
+        // 활성에서 비활성으로 변경된 경우
+        debugPrint('습관 비활성화: ${habit.name} - 위젯 상태 재확인');
+        await _widgetService.checkWidgetStatus();
+      } else if (!wasActive && habit.isActive) {
+        // 비활성에서 활성으로 변경된 경우
+        debugPrint('습관 활성화: ${habit.name} - 위젯 업데이트');
+        await _widgetService.onHabitChanged(habit.id);
+      }
       
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(habit.isActive ? '${habit.name} 습관이 비활성화되었습니다.' : '${habit.name} 습관이 활성화되었습니다.'),
+          content: Text(wasActive ? '${habit.name} 습관이 비활성화되었습니다.' : '${habit.name} 습관이 활성화되었습니다.'),
           backgroundColor: Theme.of(context).colorScheme.primary,
           duration: const Duration(seconds: 1),
         ),
@@ -641,14 +674,55 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     try {
       // 위젯으로부터 전달받은 Intent 확인
       final prefs = await SharedPreferences.getInstance();
-      final widgetResetEvent = prefs.getString('widget_reset_event');
+      final widgetResetEvent = prefs.getString('flutter.widget_reset_event');
       
       if (widgetResetEvent != null) {
         debugPrint('위젯으로부터 앱이 열림 - 이벤트 확인');
         await _checkWidgetResetEvent();
       }
+      
+      // 딥링크로 위젯 설정 페이지가 요청되었는지 확인
+      await _checkDeepLinkIntent();
     } catch (e) {
       debugPrint('위젯 Intent 확인 오류: $e');
+    }
+  }
+  
+  Future<void> _checkDeepLinkIntent() async {
+    try {
+      // 현재 앱의 URI 확인 (이 부분은 플랫폼별로 구현 필요)
+      final prefs = await SharedPreferences.getInstance();
+      final deepLinkFlag = prefs.getBool('widget_setup_requested');
+      
+      if (deepLinkFlag == true) {
+        // 플래그 제거
+        await prefs.remove('widget_setup_requested');
+        // 위젯 설정 페이지로 이동
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _navigateToWidgetSettings();
+        });
+        debugPrint('딥링크로 위젯 설정 페이지 열기');
+      }
+    } catch (e) {
+      debugPrint('딥링크 확인 오류: $e');
+    }
+  }
+
+  Future<void> _checkAndRefreshHabits() async {
+    try {
+      // 파일에서 위젯 이벤트 확인
+      final eventFile = File('/data/data/com.example.habit_reminder/files/widget_reset_event.json');
+      
+      // 위젯 이벤트가 있으면 습관 목록 새로고침
+      if (await eventFile.exists()) {
+        final updatedHabits = _habitService.getAllHabits();
+        setState(() {
+          _habits = updatedHabits;
+        });
+        debugPrint('위젯 이벤트로 인한 습관 목록 새로고침');
+      }
+    } catch (e) {
+      debugPrint('습관 목록 새로고침 확인 오류: $e');
     }
   }
 }
